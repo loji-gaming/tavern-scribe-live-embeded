@@ -64,7 +64,7 @@ Everything the app broadcasts into the rooms you join is yours to react to — d
 - **Webhooks** (rolling out): the same moments POSTed to any URL, signed, with retries — for rigs that live behind n8n / Zapier / Home Assistant instead of on the table.
 - **Map triggers → the real world**: a DM drops a trigger zone on the map; a token steps in; your fog machine coughs. That's the goal of this whole direction.
 
-Watch the [tinkers page](https://www.tavernscribe.com/tinkers) and this repo for those hooks as they land.
+**Full event reference: [docs/EVENTS.md](docs/EVENTS.md)** — including `AppEventRecorded`, the live-room broadcast that pushes every notable moment (kills, deaths, level-ups, loot, recap published) into the room this firmware already sits in, the instant it happens. Watch the [tinkers page](https://www.tavernscribe.com/tinkers) and this repo as the webhook layer lands.
 
 ## Credits
 
