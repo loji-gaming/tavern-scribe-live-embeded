@@ -39,11 +39,19 @@ Every notable campaign moment, one envelope, the instant it's recorded:
 | `recap.published` | the recap ships (share link included) | `sessionTitle`, `recapUrl` |
 | `newspaper.published` | the campaign newspaper ships | `sessionTitle`, `newspaperUrl` |
 
-Deliberately **not** in the live room:
+Deliberately **not** in the shared room:
 - `map.zone_triggered` — zone triggers can be hidden traps; they stay on the
-  DM-only `ZoneTriggered` channel (MapTokenHub) so a player's device can't
-  spoil them. DM-owned rigs: listen there, or catch the webhook.
+  DM-only `ZoneTriggered` channel (MapTokenHub) so a player's connection can't
+  spoil them. **Devices are DM gear — listen to BOTH hubs**: this firmware's
+  room for the app-event stream, plus `/hubs/maptokens` (`campaign:{id}` room)
+  for `ZoneTriggered` and the VTT traffic. Or catch the webhook.
 - `character.status_event` — post-session transcript facts, not live moments.
+
+> **Auth roadmap:** integrations are set up by the DM. Today the portal takes
+> a member's access token; **campaign device keys** (`tsdk_…`, created in
+> Settings → Integrations, subscribe-only, revocable, `dm-events` or
+> `table-events` scope) are the designed replacement — same query param, no
+> JWT juggling, and revoking the key kills the device's socket.
 
 ### Pre-existing broadcasts (same room, live today)
 
