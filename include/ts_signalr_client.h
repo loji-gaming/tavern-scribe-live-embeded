@@ -6,51 +6,43 @@
 #include <ArduinoJson.h>
 #include <functional>
 
-// Minimal SignalR (JSON protocol) client for Tavern Scribe's UsersHub.
-//
-// Connection lifecycle it implements (mirrors the web app's own flow):
-//   1. wss://{host}/hubs/users?campaignId={id}&access_token={jwt}
-//   2. send handshake  {"protocol":"json","version":1}\x1e
-//   3. server invokes  ReadyForRegistration
-//   4. we invoke       RegisterUserConnection(token), JoinPartyChatGroup(campaignId)
-//   5. server invokes  PartyChatMessageReceived(message) for every table message —
-//      dice rolls arrive as messageType == 1 with a diceRollJson payload.
-//   6. type-6 pings both ways keep the socket warm.
+// Minimal SignalR JSON client for Tavern Scribe's receive-only automation hub:
+//   wss://{host}/hubs/automations?access_token={tsdk_device_key}
+//   -> SignalR handshake
+//   <- CustomEventReceived(envelope)
 
 enum class TsConnectionState {
     DISCONNECTED,
     CONNECTING,
     HANDSHAKING,
-    JOINING,
     LIVE,
     RECONNECT_WAIT,
 };
 
-// Fired for every dice roll seen in the campaign's party chat.
-struct TsDiceRoll {
-    String senderName;
-    String expression;
-    int total = 0;
-    bool isNatural20 = false;
-    bool isNatural1 = false;
+struct TsCustomEvent {
+    String id;
+    String name;
+    String displayName;
+    String origin;
+    String payloadJson;
 };
 
-using DiceRollCallback = std::function<void(const TsDiceRoll& roll)>;
+using CustomEventCallback = std::function<void(const TsCustomEvent& event)>;
 using StateCallback = std::function<void(TsConnectionState state)>;
 
 class TsSignalRClient {
 public:
-    // token is the Tavern Scribe access token of a campaign member; the hub
-    // authenticates the socket from the access_token query parameter.
-    void begin(const String& host, const String& campaignId, const String& token);
+    // deviceKey is the tsdk_-prefixed key revealed once in Campaign Settings.
+    // It can only receive selected events; it is not a campaign-member login.
+    void begin(const String& host, const String& deviceKey);
     void connect();
     void disconnect();
-    void loop();  // call every iteration of loop()
+    void loop();
 
     bool isLive() const { return _state == TsConnectionState::LIVE; }
     TsConnectionState state() const { return _state; }
 
-    void onDiceRoll(DiceRollCallback cb) { _onDiceRoll = cb; }
+    void onCustomEvent(CustomEventCallback cb) { _onCustomEvent = cb; }
     void onStateChange(StateCallback cb) { _onState = cb; }
 
 private:
@@ -59,26 +51,20 @@ private:
     void handleInvocation(JsonObject msg);
     void sendHandshake();
     void sendPing();
-    void invoke(const String& target, JsonArray args);
-    void invoke1(const String& target, const String& arg);
     void setState(TsConnectionState next);
     void scheduleReconnect();
 
     WebSocketsClient _ws;
     String _host;
-    String _campaignId;
     String _token;
     String _rxBuffer;
-
     TsConnectionState _state = TsConnectionState::DISCONNECTED;
     bool _handshakeAcked = false;
     unsigned long _lastPing = 0;
     unsigned long _reconnectAt = 0;
     unsigned long _reconnectDelay = 0;
-    int _invocationId = 0;
-
-    DiceRollCallback _onDiceRoll = nullptr;
+    CustomEventCallback _onCustomEvent = nullptr;
     StateCallback _onState = nullptr;
 };
 
-#endif // TS_SIGNALR_CLIENT_H
+#endif
