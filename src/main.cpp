@@ -24,6 +24,8 @@ struct Effect {
     unsigned long until = 0;
     unsigned long lastToggle = 0;
     bool on = false;
+
+    explicit Effect(uint8_t relayPin) : pin(relayPin) {}
 };
 static Effect primaryEffect{PIN_RELAY_PRIMARY};
 static Effect secondaryEffect{PIN_RELAY_SECONDARY};
