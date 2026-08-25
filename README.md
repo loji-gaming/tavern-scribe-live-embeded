@@ -1,11 +1,11 @@
 # Tavern Scribe Live — ESP32 Table Effects
 
-Firmware that plugs your **real table** into your [Tavern Scribe](https://www.tavernscribe.com) campaign. An ESP32 subscribes directly to your campaign's real-time room over websockets — the same room the app itself uses — and fires relay channels the instant a table moment happens. Zero polling, zero delay:
+Firmware that plugs your **real table** into your [Tavern Scribe](https://www.tavernscribe.com) campaign. An ESP32 joins the same real-time party-chat path used by the app and fires relay channels when a shared dice message lands. No polling:
 
 - 🎲 **Natural 20** → celebration channel flashes (gold light, glitter cannon, whatever you wire)
 - 💀 **Natural 1** → doom channel flashes (blood-red bulb, thunder sound board, your call)
 
-This is the starter rig. Fork it, rewire it, make it weirder — see [What else you can listen to](#what-else-you-can-listen-to).
+This is the starter rig. Fork it, rewire it, make it weirder — then use Tavern Scribe's signed webhooks when you need the broader campaign-event catalog.
 
 > Full guide with hardware links: **https://www.tavernscribe.com/tinkers**
 
@@ -37,7 +37,7 @@ This is the starter rig. Fork it, rewire it, make it weirder — see [What else 
 4. Enter your WiFi credentials plus three Tavern Scribe fields:
    - **API host** — `api.tavernscribe.com` (prefilled)
    - **Campaign ID** — from your campaign's URL: `…/campaign/{THIS-PART}/recap`
-   - **Access token** — a signed-in campaign member's token (any member works; a dedicated "table effects" account is tidy). Grab it from your browser's devtools while on the app (Application → Local Storage → access token), or ask in our [Discord](https://discord.gg/rRfHDgunkY) — a friendlier device-token flow is on the roadmap.
+   - **Access token** — a signed-in campaign member's token. This is a real login credential: protect it, keep the device under your control, and do not expose the configuration portal. A dedicated "table effects" member limits practical exposure. Scoped device keys are on the roadmap.
 5. The status LED blinks while connecting and goes **solid when live**. Roll a d20 in party chat. Enjoy the light show.
 
 ## How it works
@@ -54,17 +54,20 @@ wss://{host}/hubs/users?campaignId={id}&access_token={token}
        messageType == 1 → diceRollJson → { isNatural20, isNatural1, total, … }
 ```
 
-`src/ts_signalr_client.cpp` is a ~200-line reusable client: handshake, frame splitting on the `0x1e` record separator, invocations, type-6 keepalives, exponential-backoff reconnect. Point your own handler at any hub event the app broadcasts.
+`src/ts_signalr_client.cpp` is a ~200-line reusable client: handshake, frame splitting on the `0x1e` record separator, invocations, type-6 keepalives, and exponential-backoff reconnect. The demonstrated contract is `PartyChatMessageReceived`; other app hub messages are internal implementation details unless they are separately documented.
 
-## What else you can listen to
+## Two integration paths
 
-Everything the app broadcasts into the rooms you join is yours to react to — dice are just the demo. And the platform side is growing on purpose:
+This firmware demonstrates one focused real-time path: shared party-chat dice messages. Natural 20s and natural 1s can therefore reach an on-table relay without polling.
 
-- **App events** (shipping now): notable moments — kills, deaths, level-ups, loot claims, recap published, **map zone triggers** — are being captured as first-class events.
-- **Webhooks** (rolling out): the same moments POSTed to any URL, signed, with retries — for rigs that live behind n8n / Zapier / Home Assistant instead of on the table.
-- **Map triggers → the real world**: a DM drops a trigger zone on the map; a token steps in; your fog machine coughs. That's the goal of this whole direction.
+For the complete campaign-event catalog, use **signed outbound webhooks**, available now in Campaign Settings → Webhooks. Choose event types such as kills, character death and revival, level-ups, loot claims, map-zone triggers, session transitions, and published recaps or newspapers. Tavern Scribe sends a stable JSON envelope to your public HTTPS receiver with HMAC signatures, retry handling, a delivery log, test sends, and replay.
 
-**Full event reference: [docs/EVENTS.md](docs/EVENTS.md)** — including `AppEventRecorded`, the live-room broadcast that pushes every notable moment (kills, deaths, level-ups, loot, recap published) into the room this firmware already sits in, the instant it happens. Watch the [tinkers page](https://www.tavernscribe.com/tinkers) and this repo as the webhook layer lands.
+That separation is intentional:
+
+- **SignalR party-chat dice path** — a low-latency developer starter for hardware physically at the table.
+- **Signed webhooks** — the stable automation contract for n8n, Make, Zapier webhook triggers, secure Home Assistant relays, or your own service.
+
+See the exact boundaries and payload examples in **[docs/EVENTS.md](docs/EVENTS.md)**, or explore the full [Tavern Scribe builder guide](https://www.tavernscribe.com/tinkers).
 
 ## Credits
 
