@@ -1,14 +1,12 @@
 // Tavern Scribe Live — ESP32 table effects
 //
-// Subscribes to your campaign's real-time room and fires two relay channels
-// on table moments, with zero polling delay:
-//   • natural 20  → celebration channel (PIN_RELAY_NAT20) flashes
-//   • natural 1   → doom channel (PIN_RELAY_NAT1) flashes
+// Subscribes to your campaign's receive-only automation room and fires two
+// relay channels when selected named events arrive, with zero polling delay.
 //
 // First boot (or after holding BOOT ~5s): the device opens a WiFi access
 // point named TavernScribe-Live-XXXX with a captive portal where you enter
-// your WiFi plus three Tavern Scribe fields: API host, campaign id, and an
-// access token for any member of the campaign. Everything persists in NVS.
+// your WiFi, API host, and a receive-only tsdk_ device key. Everything
+// persists in NVS.
 
 #include <Arduino.h>
 #include <WiFiManager.h>
@@ -27,8 +25,8 @@ struct Effect {
     unsigned long lastToggle = 0;
     bool on = false;
 };
-static Effect nat20Effect{PIN_RELAY_NAT20};
-static Effect nat1Effect{PIN_RELAY_NAT1};
+static Effect primaryEffect{PIN_RELAY_PRIMARY};
+static Effect secondaryEffect{PIN_RELAY_SECONDARY};
 
 static void relayWrite(uint8_t pin, bool on) {
 #if RELAY_ACTIVE_LOW
@@ -57,12 +55,11 @@ static void runEffect(Effect& e) {
 }
 
 // ─── Config portal ───────────────────────────────────────────────────────
-static String cfgHost, cfgCampaignId, cfgToken;
+static String cfgHost, cfgToken;
 
 static void loadConfig() {
     prefs.begin("tslive", true);
     cfgHost = prefs.getString("host", DEFAULT_TS_HOST);
-    cfgCampaignId = prefs.getString("campaign", "");
     cfgToken = prefs.getString("token", "");
     prefs.end();
 }
@@ -70,7 +67,6 @@ static void loadConfig() {
 static void saveConfig() {
     prefs.begin("tslive", false);
     prefs.putString("host", cfgHost);
-    prefs.putString("campaign", cfgCampaignId);
     prefs.putString("token", cfgToken);
     prefs.end();
 }
@@ -79,11 +75,8 @@ static void runPortal(bool forcePortal) {
     WiFiManager wm;
 
     WiFiManagerParameter pHost("host", "Tavern Scribe API host", cfgHost.c_str(), 64);
-    WiFiManagerParameter pCampaign("campaign", "Campaign ID", cfgCampaignId.c_str(), 64);
-    // Access tokens are long JWTs — give the field room.
-    WiFiManagerParameter pToken("token", "Access token (campaign member)", cfgToken.c_str(), 1600);
+    WiFiManagerParameter pToken("token", "Device key (tsdk_...)", cfgToken.c_str(), 96);
     wm.addParameter(&pHost);
-    wm.addParameter(&pCampaign);
     wm.addParameter(&pToken);
 
     String apName = "TavernScribe-Live-" + String((uint32_t)ESP.getEfuseMac(), HEX).substring(0, 4);
@@ -98,7 +91,6 @@ static void runPortal(bool forcePortal) {
     }
 
     cfgHost = pHost.getValue();
-    cfgCampaignId = pCampaign.getValue();
     cfgToken = pToken.getValue();
     saveConfig();
 }
@@ -126,15 +118,15 @@ void setup() {
     Serial.begin(115200);
     DEBUG_PRINTLN("\nTavern Scribe Live — table effects firmware");
 
-    pinMode(PIN_RELAY_NAT20, OUTPUT);
-    pinMode(PIN_RELAY_NAT1, OUTPUT);
+    pinMode(PIN_RELAY_PRIMARY, OUTPUT);
+    pinMode(PIN_RELAY_SECONDARY, OUTPUT);
     pinMode(PIN_STATUS_LED, OUTPUT);
     pinMode(PIN_RESET_BUTTON, INPUT_PULLUP);
-    relayWrite(PIN_RELAY_NAT20, false);
-    relayWrite(PIN_RELAY_NAT1, false);
+    relayWrite(PIN_RELAY_PRIMARY, false);
+    relayWrite(PIN_RELAY_SECONDARY, false);
 
     loadConfig();
-    runPortal(cfgCampaignId.isEmpty() || cfgToken.isEmpty());
+    runPortal(cfgToken.isEmpty());
 
     DEBUG_PRINTF("[WiFi] connected: %s\n", WiFi.localIP().toString().c_str());
 
@@ -143,19 +135,19 @@ void setup() {
         digitalWrite(PIN_STATUS_LED, state == TsConnectionState::LIVE ? HIGH : LOW);
     });
 
-    tsClient.onDiceRoll([](const TsDiceRoll& roll) {
-        if (roll.isNatural20) startEffect(nat20Effect);
-        if (roll.isNatural1) startEffect(nat1Effect);
+    tsClient.onCustomEvent([](const TsCustomEvent& event) {
+        if (event.name == PRIMARY_EVENT_NAME) startEffect(primaryEffect);
+        if (event.name == SECONDARY_EVENT_NAME) startEffect(secondaryEffect);
     });
 
-    tsClient.begin(cfgHost, cfgCampaignId, cfgToken);
+    tsClient.begin(cfgHost, cfgToken);
     tsClient.connect();
 }
 
 void loop() {
     tsClient.loop();
-    runEffect(nat20Effect);
-    runEffect(nat1Effect);
+    runEffect(primaryEffect);
+    runEffect(secondaryEffect);
     checkResetButton();
 
     // Slow blink while not live so the tinker can see it's trying.
