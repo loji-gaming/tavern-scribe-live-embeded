@@ -1,83 +1,155 @@
-# Event Reference
+# Event and Transport Reference
 
-Two delivery channels, one event taxonomy. This page is the tinker's map of
-what you can hear and where.
+Tavern Scribe exposes two useful integration paths today. They solve different
+jobs and do not carry the same payloads.
 
-## Channel 1 — Live room (websocket, zero delay)
+## Path 1 — live party-chat dice messages
 
-Join `party_chat:{campaignId}` on `/hubs/users` (this firmware's client does it
-for you) and listen for these server invocations:
+This firmware connects to `/hubs/users`, completes the SignalR JSON handshake,
+registers the current member connection, and invokes
+`JoinPartyChatGroup(campaignId)`. It then listens for:
 
-### `AppEventRecorded` — the app-event spine, live
+### `PartyChatMessageReceived`
 
-Every notable campaign moment, one envelope, the instant it's recorded:
+The event contains a party-chat message. When `messageType == 1`, the
+`diceRollJson` property holds a shared dice result with fields including:
 
 ```json
 {
-  "id": "…", "eventType": "dice.natural_20",
-  "actorUserId": "…", "characterId": "…", "sessionId": "…", "entityId": "…",
-  "payload": { "name": "Elyra", "expression": "1d20+7", "total": 27 },
-  "createdAt": "2026-08-20T21:03:11Z"
+  "isNatural20": true,
+  "isNatural1": false,
+  "total": 27
 }
 ```
 
-| eventType | Fires when | Key payload |
-|---|---|---|
-| `dice.natural_20` | a nat 20 lands in party chat / VTT dice | `name`, `expression`, `total`, `context?` |
-| `dice.natural_1` | a nat 1 lands | same |
-| `combat.enemy_killed` | a creature's fate is stamped killed (HP hit 0 or DM toggle) | `creatureName`, `sceneId?` |
-| `character.died` | a character enters the graveyard | `characterName` |
-| `character.revived` | …and comes back | `characterName` |
-| `kill.confirmed` | the post-session AI confirms a kill from the transcript | `killerName`, `victimName`, `isCriticalHit?`, `killMethod?` |
-| `party.level_up` | the DM levels the party | `newLevel` |
-| `loot.claimed` | a player claims loot | `itemName`, `claimerName` |
-| `member.joined` | someone accepts a campaign invite | `memberName` |
-| `session.recording_started` | a recording session begins (Discord bot) | `source`, `sessionTitle?` |
-| `session.table_started` | the VTT table goes live | `gameSessionId`, `mapId?` |
-| `session.table_ended` | the table wraps | — |
-| `session.processing_complete` | the AI finishes processing a session | `sessionTitle` |
-| `recap.published` | the recap ships (share link included) | `sessionTitle`, `recapUrl` |
-| `newspaper.published` | the campaign newspaper ships | `sessionTitle`, `newspaperUrl` |
+The reference firmware maps a natural 20 and natural 1 to two non-blocking
+relay effects. This is the demonstrated low-latency device contract.
 
-Deliberately **not** in the shared room:
-- `map.zone_triggered` — zone triggers can be hidden traps; they stay on the
-  DM-only `ZoneTriggered` channel (MapTokenHub) so a player's connection can't
-  spoil them. **Devices are DM gear — listen to BOTH hubs**: this firmware's
-  room for the app-event stream, plus `/hubs/maptokens` (`campaign:{id}` room)
-  for `ZoneTriggered` and the VTT traffic. Or catch the webhook.
-- `character.status_event` — post-session transcript facts, not live moments.
+Players can produce these messages from Tavern Scribe's VTT or character-sheet
+roll controls when sharing rolls to party chat is enabled. That also makes the
+starter useful at a physical table where players keep sheets on phones or
+laptops while continuing to use physical minis, maps, and dice.
 
-> **Auth roadmap:** integrations are set up by the DM. Today the portal takes
-> a member's access token; **campaign device keys** (`tsdk_…`, created in
-> Settings → Integrations, subscribe-only, revocable, `dm-events` or
-> `table-events` scope) are the designed replacement — same query param, no
-> JWT juggling, and revoking the key kills the device's socket.
+### Important live-path boundaries
 
-### Pre-existing broadcasts (same room, live today)
+- This starter does **not** receive the full campaign event catalog through
+  `PartyChatMessageReceived`.
+- `AppEventRecorded` is an internal, DM-only refetch nudge on the map-token hub.
+  Its small ids-only payload is not the external campaign-event envelope and is
+  not the source used by this firmware.
+- Map-zone triggers use their own DM-only live handling. Use a webhook when an
+  external rig needs a stable `map.zone_triggered` event.
+- Other hub messages are app implementation details unless explicitly
+  documented as an integration contract.
+- The current firmware authenticates with a campaign-member access token.
+  Treat it as a credential, keep the device and configuration portal private,
+  and rotate the token if the device is lost. Scoped device keys are roadmap.
 
-The room also carries the app's own real-time traffic — the starter firmware
-uses the first one:
+## Path 2 — signed outbound webhooks
 
-| Invocation | What it is |
+Webhooks are available now in **Campaign Settings → Webhooks**. A campaign DM
+registers a public HTTPS receiver and selects the event types that endpoint
+should receive.
+
+Each delivery uses one stable, camelCase JSON envelope:
+
+```json
+{
+  "id": "evt_…",
+  "type": "dice.natural_20",
+  "createdAt": "2026-08-25T20:15:00Z",
+  "apiVersion": "2026-08-01",
+  "campaign": {
+    "id": "campaign-id",
+    "name": "The Amber Court"
+  },
+  "session": {
+    "id": "session-id"
+  },
+  "actor": {
+    "characterId": "character-id"
+  },
+  "data": {
+    "name": "Elyra Dawnwhisper",
+    "expression": "1d20+7",
+    "total": 27
+  }
+}
+```
+
+`session` and `actor` are omitted when they do not apply. The contents of
+`data` vary by event type. Internal account ids are not part of the external
+contract.
+
+### Delivery headers and signature
+
+Every POST includes:
+
+```text
+X-TavernScribe-Event: dice.natural_20
+X-TavernScribe-Delivery: delivery-id
+X-TavernScribe-Signature: t={unix},v1={lowercase-hmac-sha256}
+```
+
+To verify a request, compute HMAC-SHA256 with the subscription secret over the
+exact UTF-8 string `{t}.{rawRequestBody}`, compare it to `v1` using a
+constant-time comparison, and reject timestamps outside your tolerance window
+(five minutes is recommended). Keep the raw body until verification is
+complete; parsing and re-serializing JSON first can change the bytes.
+
+Signing secrets use the `whsec_` prefix, are revealed once, and should be stored
+like passwords. The management UI supports rotating a secret when needed.
+
+### Current webhook event catalog
+
+| Event type | Required `data` fields |
 |---|---|
-| `PartyChatMessageReceived` | every table message; `messageType == 1` = dice, parse `diceRollJson` → `isNatural20` / `isNatural1` / `total` |
-| `PartyLevelChanged` | party level changed |
-| `SheetDataUpdated` | a character sheet changed (IDs only — refetch) |
+| `dice.natural_20` | `name`, `expression`, `total` |
+| `dice.natural_1` | `name`, `expression`, `total` |
+| `combat.enemy_killed` | `creatureName` |
+| `character.died` | `characterName` |
+| `character.revived` | `characterName` |
+| `kill.confirmed` | `killerName`, `victimName` |
+| `party.level_up` | `newLevel` |
+| `loot.claimed` | `itemName`, `claimerName` |
+| `member.joined` | `memberName` |
+| `map.zone_triggered` | `zoneName` |
+| `session.recording_started` | — |
+| `session.table_started` | — |
+| `session.table_ended` | — |
+| `session.processing_complete` | `sessionTitle` |
+| `recap.published` | `sessionTitle`, `recapUrl` |
+| `newspaper.published` | `sessionTitle`, `newspaperUrl` |
 
-The VTT hub (`/hubs/maptokens`, `campaign:{campaignId}` room) additionally
-broadcasts token HP updates, initiative state, `GameSessionStarted`/`Ended`,
-`LootItemClaimed`, music/weather/theater cues, and the DM-only `ZoneTriggered`.
-There are ~80 constants in total — the two tables above are the curated
-tinker-relevant set.
+The catalog endpoint in Tavern Scribe provides an example payload for every
+eligible type, and the settings page can send a real test delivery before a
+session.
 
-## Channel 2 — Signed webhooks (rolling out)
+### Operational behavior
 
-The same `eventType` taxonomy POSTed to any URL with HMAC signatures, retries,
-and delivery logs — for rigs behind n8n / Zapier / Make / Home Assistant.
-**Webhook-eligible set** = everything in the `AppEventRecorded` table above
-**plus `map.zone_triggered`** (`zoneName`, `mapId`, `sourceEvent`) — the DM
-subscribing their own endpoint to their own hidden traps is the point: token
-steps in the zone, your fog machine coughs.
+- Failed deliveries retry on a 30 seconds → 5 minutes → 30 minutes → 2 hours →
+  6 hours schedule.
+- Delivery history is visible to the campaign DM, and terminal failures can be
+  replayed.
+- An endpoint returning HTTP 410 is automatically disabled. Repeated terminal
+  failures also trip the subscription breaker.
+- Destinations must be public HTTPS endpoints. Private, loopback, link-local,
+  and other unsafe network targets are rejected, including after DNS
+  resolution.
+- Webhook delivery is asynchronous. Use the live party-chat path when a few
+  seconds would weaken an on-table effect; use webhooks when durability and the
+  full catalog matter more.
 
-Watch this repo and https://www.tavernscribe.com/tinkers — this doc gets
-updated as the hooks land.
+## Which path should I use?
+
+| You are building… | Start with… |
+|---|---|
+| An ESP32 light that reacts to a shared crit at the table | This repository's live SignalR client |
+| An n8n, Make, or Zapier flow | Signed webhooks |
+| A Home Assistant automation | Signed webhooks through a secure public relay |
+| An OBS overlay or custom stream service | Signed webhooks |
+| A custom low-latency dice device | This repository, then keep the live scope narrow |
+| A rig reacting to kills, level-ups, map zones, or published recaps | Signed webhooks |
+
+The [Tavern Scribe builder guide](https://www.tavernscribe.com/tinkers) keeps
+the product-level overview and project ideas in one place.
